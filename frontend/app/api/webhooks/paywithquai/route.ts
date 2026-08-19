@@ -1,30 +1,16 @@
 import { NextResponse } from "next/server";
 import { createHmac, timingSafeEqual } from "node:crypto";
+import { after } from "next/server";
 import { config } from "@/lib/config";
+import {
+  notifyDiscord,
+  recordPayment,
+  relayToMerchant,
+  type WebhookPayload,
+} from "@/lib/fulfillment";
 
 export const runtime = "nodejs";
-
-interface WebhookPayload {
-  id: string;
-  type: string;
-  data: {
-    merchantId: string;
-    merchant: string;
-    orderId: string;
-    payer: string;
-    token: string;
-    amount: string;
-    feeBps: number;
-    fee: string;
-    net: string;
-    txHash: string;
-    blockNumber: number;
-    timestamp: number;
-    nonce: number;
-  };
-}
-
-const FULFILLED: Record<string, string> = {};
+export const maxDuration = 60;
 
 export async function POST(req: Request) {
   const raw = await req.text();
@@ -69,10 +55,23 @@ export async function POST(req: Request) {
   const key = `${orderId}:${txHash}`;
 
   // Idempotent: acknowledge duplicates without re-fulfilling.
-  if (!FULFILLED[key]) {
-    FULFILLED[key] = net;
+  const recorded = recordPayment(payload);
+  if (recorded) {
     console.log(`Order ${orderId} confirmed — net ${net} (${txHash})`);
+    // Fulfill after responding so the relayer gets its 2xx immediately.
+    after(async () => {
+      try {
+        await relayToMerchant(payload, header, key);
+      } catch (err) {
+        console.error(`Fulfillment relay failed for ${orderId}:`, err);
+      }
+      try {
+        await notifyDiscord(payload);
+      } catch (err) {
+        console.error(`Discord notify failed for ${orderId}:`, err);
+      }
+    });
   }
 
-  return NextResponse.json({ ok: true });
+  return NextResponse.json({ ok: true, recorded });
 }

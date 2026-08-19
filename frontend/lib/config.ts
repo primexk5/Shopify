@@ -15,6 +15,11 @@ export const config = {
   backendPrivateKey: process.env.BACKEND_PRIVATE_KEY ?? "",
   webhookSecret: process.env.WEBHOOK_SECRET ?? "",
   platformApiBase: process.env.PLATFORM_API_BASE ?? "https://quai-merchant-three.vercel.app",
+  // Where verified payments are forwarded for fulfillment (e.g. Shopify webhook
+  // receiver). Empty = accept + record but don't relay.
+  merchantFulfillmentUrl: process.env.MERCHANT_FULFILLMENT_URL ?? "",
+  // Optional Discord webhook for instant payment alerts.
+  discordWebhookUrl: process.env.DISCORD_WEBHOOK_URL ?? "",
   tokenAddress: process.env.TOKEN_ADDRESS ?? ZERO_ADDRESS,
 };
 
