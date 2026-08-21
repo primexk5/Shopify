@@ -17,7 +17,6 @@ import {
   parseError,
   payOrder,
   payOrderNative,
-  waitForConfirmation,
   type OnChainOrder,
 } from "@/lib/paywithquai";
 import { ZERO_ADDRESS } from "@/lib/config";
@@ -31,7 +30,6 @@ type Stage =
   | { name: "settled" }
   | { name: "ready" }
   | { name: "paying"; step: string }
-  | { name: "awaiting"; webhook: string | null }
   | { name: "done"; txHash: string; net: string }
   | { name: "error"; message: string };
 
@@ -158,13 +156,6 @@ export default function CheckoutPage({ params }: { params: Params }) {
       const txHash = isNativeOrder(order)
         ? await payOrderNative(order.merchant, orderId, order.amount)
         : await payOrder(order.merchant, orderId, order.token, order.amount);
-      setStage({ name: "awaiting", webhook: null });
-      const confirmation = await waitForConfirmation(order.merchant, orderId, (webhook) =>
-        setStage({ name: "awaiting", webhook })
-      );
-      if (!confirmation.settledOnChain) {
-        throw new Error("Payment was not confirmed on-chain — check your wallet and try again.");
-      }
       setStage({
         name: "done",
         txHash,
@@ -184,8 +175,8 @@ export default function CheckoutPage({ params }: { params: Params }) {
         <p className="mt-6 text-sm text-emerald-300">Payment confirmed</p>
         <h1 className="mt-2 text-3xl font-semibold">{stage.net} QUAI sent</h1>
         <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-zinc-400">
-          The merchant receives the payment directly — their wallet is also
-          getting a signed payment.confirmed webhook from the relayer.
+          The merchant receives the payment directly. Your payment is complete
+          once the transaction is confirmed on-chain.
         </p>
         <div className="mt-6 space-y-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 text-left font-mono text-xs text-zinc-500">
           <p className="break-all">
@@ -263,7 +254,7 @@ export default function CheckoutPage({ params }: { params: Params }) {
           </div>
         )}
 
-        {["ready", "paying", "awaiting"].includes(stage.name) && order && (
+        {["ready", "paying"].includes(stage.name) && order && (
           <>
             <div className="text-center">
               <p className="text-sm text-zinc-400">Total to pay</p>
@@ -459,17 +450,6 @@ export default function CheckoutPage({ params }: { params: Params }) {
               </div>
             )}
 
-            {stage.name === "awaiting" && (
-              <div className="mt-4 flex w-full flex-col items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900 py-3.5 text-sm text-zinc-400">
-                <span className="h-4 w-4 animate-spin rounded-full border-2 border-zinc-600 border-t-amber-400" />
-                Payment sent — waiting for relayer confirmation…
-                <span className="text-xs">
-                  {stage.webhook
-                    ? `webhook status: ${stage.webhook}`
-                    : "waiting for the relayer to pick up PaymentSettled"}
-                </span>
-              </div>
-            )}
           </>
         )}
 
