@@ -20,7 +20,7 @@ interface CartContextValue {
 
 const CartContext = createContext<CartContextValue | null>(null);
 
-const STORAGE_KEY = "quai-shop-cart";
+const STORAGE_KEY = "worldz-shop-testnet-cart";
 
 let cache: CartLine[] = [];
 const listeners = new Set<() => void>();

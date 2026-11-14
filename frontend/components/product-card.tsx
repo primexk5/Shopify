@@ -7,6 +7,24 @@ import { useCart } from "@/components/cart-context";
 export function ProductCard({ product }: { product: Product }) {
   const { add } = useCart();
   const [added, setAdded] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const pay = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/register-order", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ items: [{ productId: product.id, qty: 1 }] }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "Unable to start checkout");
+      window.location.assign(result.checkoutUrl);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to start checkout");
+    } finally { setBusy(false); }
+  };
 
   const handleAdd = () => {
     add(product.id);
@@ -28,7 +46,7 @@ export function ProductCard({ product }: { product: Product }) {
         <p className="flex-1 text-sm text-zinc-400">{product.description}</p>
         <div className="flex items-center justify-between">
           <span className="font-mono text-lg text-amber-400">
-            {product.price} QUAI
+            {product.price.toFixed(2)} NEAR
           </span>
           <button
             onClick={handleAdd}
@@ -41,6 +59,11 @@ export function ProductCard({ product }: { product: Product }) {
             {added ? "Added" : "Add to cart"}
           </button>
         </div>
+        <button onClick={() => void pay()} disabled={busy}
+          className="mt-2 rounded-lg bg-emerald-500 px-3 py-2 text-sm font-medium text-zinc-950 hover:bg-emerald-400 disabled:opacity-50">
+          {busy ? "Opening checkout…" : "Pay with NEAR"}
+        </button>
+        {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
       </div>
     </div>
   );

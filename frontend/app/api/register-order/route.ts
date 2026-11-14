@@ -1,89 +1,40 @@
-import { NextRequest, NextResponse } from "next/server";
-import { randomBytes } from "node:crypto";
-import { Contract, JsonRpcProvider, Wallet, id } from "quais";
-import { config, toQuaiUnits } from "@/lib/config";
-import paywithquaiAbi from "@/lib/paywithquai.abi.json";
+import { checkoutTerms } from "@/lib/worldz-checkout";
 
-export const dynamic = "force-dynamic";
+export const runtime = "nodejs";
 
-export async function POST(req: NextRequest) {
-  let body: {
-    items?: { productId: string; qty: number }[];
-    payer?: string;
-  };
+export async function POST(req: Request) {
+  const apiKey = process.env.WORLDZ_API_KEY;
+  const apiBase = process.env.WORLDZ_API_BASE;
+  const checkoutOrigin = process.env.WORLDZ_CHECKOUT_ORIGIN;
+  const merchantId = process.env.WORLDZ_MERCHANT_ID;
+  const payout = process.env.WORLDZ_PAYOUT_ACCOUNT_ID;
+  if (!apiKey || !apiBase || !checkoutOrigin || !merchantId || !payout) {
+    return Response.json({ error: "WorldzPayments checkout is not configured" }, { status: 503 });
+  }
+  if (req.headers.get("origin") && req.headers.get("origin") !== new URL(req.url).origin) {
+    return Response.json({ error: "Invalid request origin" }, { status: 403 });
+  }
+  let terms;
+  try { terms = checkoutTerms(await req.json()); }
+  catch (error) {
+    return Response.json({ error: error instanceof Error ? error.message : "Invalid cart" }, { status: 400 });
+  }
   try {
-    body = await req.json();
+    const origin = new URL(checkoutOrigin);
+    const api = new URL(apiBase.replace(/\/$/, "") + "/links");
+    if (origin.protocol !== "https:" || api.protocol !== "https:" || origin.username || origin.password || api.username || api.password) throw new Error("Invalid Worldz URLs");
+    const response = await fetch(api, {
+      method: "POST", headers: { "content-type": "application/json", Authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify(terms), cache: "no-store", redirect: "error", signal: AbortSignal.timeout(15000),
+    });
+    if (!response.ok) {
+      return Response.json({ error: response.status === 401 ? "Worldz merchant API key was rejected" : "WorldzPayments could not create the payment link" }, { status: 502 });
+    }
+    const result = await response.json();
+    if (typeof result.slug !== "string" || !/^[a-zA-Z0-9_-]+$/.test(result.slug) || result.merchantId !== merchantId || result.payoutAccountId !== payout || result.networkId !== "testnet" || result.amount !== terms.amount || result.asset?.type !== "native" || result.asset?.symbol !== "NEAR" || result.asset?.decimals !== 24) throw new Error("Unexpected payment link terms");
+    // The hosted checkout connects the payer wallet and claims the actual order.
+    return Response.json({ checkoutUrl: new URL(`/pay/${result.slug}`, origin).toString() }, { status: 201 });
   } catch {
-    return NextResponse.json({ error: "Invalid JSON" }, { status: 400 });
+    return Response.json({ error: "Unable to start WorldzPayments checkout. Check merchant settings and deployment availability." }, { status: 502 });
   }
-
-  const items = body.items ?? [];
-  if (items.length === 0) {
-    return NextResponse.json({ error: "Cart is empty" }, { status: 400 });
-  }
-
-  const payer = body.payer?.trim().toLowerCase() ?? "";
-  if (payer && !/^0x[0-9a-f]{40}$/.test(payer)) {
-    return NextResponse.json({ error: "Invalid payer address" }, { status: 400 });
-  }
-
-  const { products } = await import("@/lib/products");
-  let total = 0n;
-  for (const item of items) {
-    const product = products.find((p) => p.id === item.productId);
-    if (!product) {
-      return NextResponse.json({ error: `Unknown product: ${item.productId}` }, { status: 400 });
-    }
-    const qty = Math.max(1, Math.floor(item.qty ?? 1));
-    total += toQuaiUnits(product.price) * BigInt(qty);
-  }
-
-  // Cryptographically random order id — the checkout reads it back on-chain.
-  const orderId = id(`ord_web_${randomBytes(24).toString("hex")}`);
-  const expiry = 0n;
-
-  let txHash: string | null = null;
-  let registered = false;
-
-  if (config.backendPrivateKey) {
-    try {
-      const provider = new JsonRpcProvider(config.rpcUrl, undefined, {
-        usePathing: true,
-      });
-      const wallet = new Wallet(config.backendPrivateKey, provider);
-      const pay = new Contract(config.payWithQuaiAddress, paywithquaiAbi, wallet);
-
-      const tx = payer
-        ? await pay.registerOrderWithPayer(
-            orderId,
-            config.tokenAddress,
-            total,
-            expiry,
-            payer
-          )
-        : await pay.registerOrder(
-            orderId,
-            config.tokenAddress,
-            total,
-            expiry
-          );
-      await tx.wait();
-      txHash = tx.hash;
-      registered = true;
-    } catch (err) {
-      console.error("Failed to register order on-chain:", err);
-    }
-  }
-
-  const checkoutUrl = `${req.nextUrl.origin}/checkout/${config.merchantAddress}/${orderId}`;
-
-  return NextResponse.json({
-    orderId,
-    amount: total.toString(),
-    token: config.tokenAddress,
-    payer: payer || null,
-    registered,
-    txHash,
-    checkoutUrl,
-  });
 }

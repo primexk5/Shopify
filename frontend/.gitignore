@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Private local webhook evidence and test output
+.worldz-evidence/
+.test-build/
+!.env.example
